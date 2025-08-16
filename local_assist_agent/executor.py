@@ -11,12 +11,23 @@ from .logging_utils import log_line
 
 console = Console()
 
+def _fmt_size(size_bytes: int) -> str:
+    if size_bytes is None:
+        return "-"
+    units = ["KB", "MB", "GB"]
+    x = size_bytes / 1024.0
+    for u in units:
+        if x < 1024:
+            return f"{x:.1f} {u}"
+        x /= 1024.0
+    return f"{x:.1f} TB"
+
 def _tabulate(hits) -> Table:
     t = Table(title="Candidates (newest first)")
-    t.add_column("#"); t.add_column("Name"); t.add_column("Path"); t.add_column("KB"); t.add_column("Modified")
+    t.add_column("#"); t.add_column("Name"); t.add_column("Path"); t.add_column("Size"); t.add_column("Modified")
     for i, h in enumerate(hits, 1):
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h.mtime))
-        t.add_row(str(i), h.path.name, str(h.path), str(h.size // 1024), ts)
+        t.add_row(str(i), h.path.name, str(h.path), _fmt_size(h.size), ts)
     return t
 
 def _interactive_select(hits):
@@ -53,8 +64,12 @@ def execute(plan: Plan, do_execute: bool, scopes):
             hits = find_recent(
                 roots=scopes,
                 patterns=step.params.get("patterns", ["*"]),
-                days=step.params.get("days", 14),
+                days=step.params.get("days"),  # may be None if using smarter filters
                 name_hint=step.params.get("name_hint"),
+                newer_than_days=step.params.get("newer_than_days"),
+                older_than_days=step.params.get("older_than_days"),
+                min_size_kb=step.params.get("min_size_kb"),
+                max_size_kb=step.params.get("max_size_kb"),
             )
 
         elif step.action == "select_targets":
