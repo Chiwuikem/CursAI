@@ -1,7 +1,7 @@
 import re
 from .schemas import Plan, PlanStep
 
-# Small helpers to parse human phrases
+# ----- helpers -----
 _SIZE_UNITS = {
     "kb": 1_000,
     "kib": 1_024,
@@ -23,119 +23,114 @@ _FILETYPE_TO_PATTERNS = {
 
 def _parse_size_kb(text: str):
     """
-    Parse 'greater than 500 MB', 'over 1gb', 'less than 200kb' into (min_kb, max_kb).
-    Returns (min_kb, max_kb) or (None, None) if no size found.
+    Parse things like:
+      - greater than 1 MB
+      - less than 200 KB
+      - over 1gb
+    -> returns (min_kb, max_kb)
     """
     t = text.lower()
-    # greater than / over / at least
     gt = re.search(r"(greater than|over|at least|>=?)\s+(\d+(?:\.\d+)?)\s*(kib|kb|mib|mb|gib|gb)\b", t)
     lt = re.search(r"(less than|under|at most|<=?)\s+(\d+(?:\.\d+)?)\s*(kib|kb|mib|mb|gib|gb)\b", t)
 
     min_kb = max_kb = None
     if gt:
-        val = float(gt.group(2))
-        unit = gt.group(3)
+        val = float(gt.group(2)); unit = gt.group(3)
         bytes_val = val * _SIZE_UNITS[unit]
         min_kb = int(bytes_val / 1024)
-
     if lt:
-        val = float(lt.group(2))
-        unit = lt.group(3)
+        val = float(lt.group(2)); unit = lt.group(3)
         bytes_val = val * _SIZE_UNITS[unit]
         max_kb = int(bytes_val / 1024)
-
     return min_kb, max_kb
-
 
 def _parse_age_days(text: str):
     """
-    Understand 'today', 'yesterday', 'last week', 'older than 30 days', 'within 7 days'
-    Returns (newer_than_days, older_than_days) where:
-      - newer_than_days = modified within N days (i.e., more recent than N-day cutoff)
-      - older_than_days = modified before N days ago
+    Understand:
+      - today, yesterday, last week
+      - older than 30 days
+      - within 7 days / in the last 7 days
+    -> returns (newer_than_days, older_than_days)
     """
     t = text.lower()
-
-    # Explicit older/within
-    m_older = re.search(r"older than\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)", t)
+    m_older  = re.search(r"older than\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)", t)
     m_within = re.search(r"(within|in the last|in last|last)\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)", t)
 
     def to_days(num: int, unit: str):
-        if unit.startswith("day"):
-            return num
-        if unit.startswith("week"):
-            return num * 7
-        if unit.startswith("month"):
-            return num * 30
-        if unit.startswith("year"):
-            return num * 365
+        if unit.startswith("day"): return num
+        if unit.startswith("week"): return num * 7
+        if unit.startswith("month"): return num * 30
+        if unit.startswith("year"): return num * 365
         return num
 
     newer_than_days = None
     older_than_days = None
 
-    if "today" in t:
-        newer_than_days = 1
-    elif "yesterday" in t:
-        newer_than_days = 2  # include yesterday back to now-2d
-
-    if "last week" in t and newer_than_days is None:
-        newer_than_days = 7
-
-    if m_within:
-        newer_than_days = to_days(int(m_within.group(2)), m_within.group(3))
-
-    if m_older:
-        older_than_days = to_days(int(m_older.group(1)), m_older.group(2))
+    if "today" in t: newer_than_days = 1
+    elif "yesterday" in t: newer_than_days = 2
+    if "last week" in t and newer_than_days is None: newer_than_days = 7
+    if m_within: newer_than_days = to_days(int(m_within.group(2)), m_within.group(3))
+    if m_older:  older_than_days = to_days(int(m_older.group(1)), m_older.group(2))
 
     return newer_than_days, older_than_days
-
 
 def _infer_patterns(text: str):
     t = text.lower()
     pats = []
-    # look for explicit extensions first like ".zip", ".msi"
-    ext_hits = re.findall(r"\.(exe|zip|msi|pdf|docx?|pptx?|xlsx?)\b", t)
-    for ext in ext_hits:
+    # explicit extensions like ".zip"
+    for ext in re.findall(r"\.(exe|zip|msi|pdf|docx?|pptx?|xlsx?)\b", t):
         pats.append(f"*.{ext}")
-
-    # also check type keywords
+    # type keywords
     for k, v in _FILETYPE_TO_PATTERNS.items():
         if re.search(rf"\b{k}\b", t):
             pats.extend(v)
-
-    # default if nothing found
     if not pats:
         pats = ["*"]
-
-    # de-dupe, keep order
-    seen = set()
-    out = []
+    # de-dupe
+    seen = set(); out = []
     for p in pats:
         if p not in seen:
             out.append(p); seen.add(p)
     return out
 
+def _parse_name_hint(text: str):
+    """
+    Extract a filename substring hint from:
+      - quoted phrases: "report", 'invoice'
+      - phrases: containing X / named X / with name X
+    Returns a lowercase string or None.
+    """
+    t = text.strip()
+    q = re.search(r"[\"']([^\"']+)[\"']", t)
+    if q:
+        return q.group(1).strip().lower()
 
+    m = re.search(r"\b(containing|named|with name|with)\s+([A-Za-z0-9_\-\.\s]+)", t, re.IGNORECASE)
+    if m:
+        raw = m.group(2)
+        # stop at common keywords
+        raw = re.split(r"\b(older|within|last|greater|less|over|under|today|yesterday)\b", raw, maxsplit=1, flags=re.IGNORECASE)[0]
+        hint = raw.strip().strip(",.;").lower()
+        return hint if hint else None
+    return None
+
+# ----- planner -----
 def plan_from_prompt(prompt: str) -> Plan:
     """
-    Smarter heuristic planner:
-      - understands file types (zip/msi/pdf/exe)
-      - understands ages (today, yesterday, older than N days, within N days)
-      - understands sizes (greater than/less than N KB/MB/GB)
+    Heuristic planner with type/age/size + name parsing.
     """
     p = prompt.lower()
     steps = []
-    rationale = "Heuristic plan with type/age/size parsing; swap with LLM later."
+    rationale = "Heuristic plan with type/age/size/name parsing; swap with LLM later."
 
-    # intent: delete / remove / trash
-    if any(word in p for word in ("delete", "remove", "trash", "clean up", "cleanup", "clean")):
+    if any(w in p for w in ("delete", "remove", "trash", "clean up", "cleanup", "clean")):
         patterns = _infer_patterns(p)
         newer_days, older_days = _parse_age_days(p)
         min_kb, max_kb = _parse_size_kb(p)
+        name_hint = _parse_name_hint(prompt)
 
-        # if no explicit age hints and it mentions "today"/"yesterday", handled above; else default to last 14 days
-        if newer_days is None and older_days is None and "older than" not in p and "within" not in p and "last week" not in p and "today" not in p and "yesterday" not in p:
+        # default look-back if no age hinted
+        if all(x is None for x in (newer_days, older_days)) and not any(s in p for s in ("older than", "within", "last week", "today", "yesterday")):
             newer_days = 14
 
         steps.append(PlanStep(
@@ -143,9 +138,8 @@ def plan_from_prompt(prompt: str) -> Plan:
             f"Search {', '.join(patterns)} with filters",
             {
                 "patterns": patterns,
-                # legacy 'days' not used when smarter filters exist
                 "days": None,
-                "name_hint": None,
+                "name_hint": name_hint,
                 "newer_than_days": newer_days,
                 "older_than_days": older_days,
                 "min_size_kb": min_kb,
@@ -155,6 +149,6 @@ def plan_from_prompt(prompt: str) -> Plan:
         steps.append(PlanStep("select_targets", "Ask user to choose which file(s) to delete", {}))
         steps.append(PlanStep("move_to_trash", "Move selected file(s) to the Recycle Bin", {}))
     else:
-        steps.append(PlanStep("noop", "No recognized action. Try: delete zip files older than 30 days", {}))
+        steps.append(PlanStep("noop", "Try: delete zip files older than 30 days containing \"report\"", {}))
 
     return Plan(steps=steps, rationale=rationale)

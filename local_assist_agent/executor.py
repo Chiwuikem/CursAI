@@ -35,10 +35,12 @@ def _interactive_select(hits):
         console.print("[yellow]No candidates found.[/yellow]")
         return []
     console.print(_tabulate(hits))
-    print("Select numbers (e.g., 1,3-5) or press Enter to cancel: ", end="")
+    print("Select numbers (e.g., 1,3-5), type 'all' for everything, or press Enter to cancel: ", end="")
     sel = input().strip()
     if not sel:
         return []
+    if sel.lower() == "all":
+        return hits[:]
     idxs = set()
     for part in sel.split(","):
         part = part.strip()
@@ -64,7 +66,7 @@ def execute(plan: Plan, do_execute: bool, scopes):
             hits = find_recent(
                 roots=scopes,
                 patterns=step.params.get("patterns", ["*"]),
-                days=step.params.get("days"),  # may be None if using smarter filters
+                days=step.params.get("days"),
                 name_hint=step.params.get("name_hint"),
                 newer_than_days=step.params.get("newer_than_days"),
                 older_than_days=step.params.get("older_than_days"),
