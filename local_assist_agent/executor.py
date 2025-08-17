@@ -8,6 +8,10 @@ from .schemas import Plan
 from .policies import in_allowed_scopes, requires_extra_confirmation
 from .skills.files import find_recent, move_to_trash
 from .logging_utils import log_line
+from .config import (
+    MAX_DELETE_COUNT, MAX_TOTAL_DELETE_MB,
+    EXTRA_CONFIRM_PHRASE, BULK_CONFIRM_PHRASE
+)
 
 console = Console()
 
@@ -52,6 +56,11 @@ def _interactive_select(hits):
             idxs.add(int(part))
     return [h for i, h in enumerate(hits, 1) if i in idxs]
 
+def _summary(chosen) -> tuple[int, int]:
+    count = len(chosen)
+    total_bytes = sum((h.size or 0) for h in chosen)
+    return count, total_bytes
+
 def execute(plan: Plan, do_execute: bool, scopes):
     console.print(f"[cyan]Plan:[/cyan] {plan.rationale}")
     for s in plan.steps:
@@ -75,17 +84,36 @@ def execute(plan: Plan, do_execute: bool, scopes):
             )
 
         elif step.action == "select_targets":
+            before = len(hits)
             hits = [h for h in hits if in_allowed_scopes(h.path, scopes=scopes)]
+            hidden = before - len(hits)
+            if hidden > 0:
+                console.print(f"[yellow]Note:[/yellow] {hidden} item(s) were out of allowed scopes and hidden.")
+
             chosen = _interactive_select(hits)
             if not chosen:
                 console.print("[yellow]No selection. Exiting.[/yellow]")
                 return
+
+            # Extra confirmation for risky/system-like selections
             risky = [h for h in chosen if requires_extra_confirmation(h.path)]
             if risky:
-                console.print("[red]Warning: risky selections detected.[/red]")
+                console.print("[red]Warning:[/red] risky/system-like selections detected.")
                 console.print(_tabulate(risky))
-                print("Type 'I UNDERSTAND' to proceed: ", end="")
-                if input().strip() != "I UNDERSTAND":
+                print(f"Type '{EXTRA_CONFIRM_PHRASE}' to proceed: ", end="")
+                if input().strip().lower() != EXTRA_CONFIRM_PHRASE.lower():
+                    console.print("[yellow]Aborted.[/yellow]")
+                    return
+
+            # Bulk-delete safeguards: large count or large total size
+            count, total_bytes = _summary(chosen)
+            console.print(f"[bold]Summary:[/bold] {count} item(s), total {_fmt_size(total_bytes)}")
+            needs_bulk_confirm = (count > MAX_DELETE_COUNT) or (total_bytes / (1024 * 1024) > MAX_TOTAL_DELETE_MB)
+            if needs_bulk_confirm:
+                console.print(f"[red]Bulk safeguard:[/red] selection exceeds limits "
+                              f"({MAX_DELETE_COUNT} files or {MAX_TOTAL_DELETE_MB} MB).")
+                print(f"Type '{BULK_CONFIRM_PHRASE}' to proceed: ", end="")
+                if input().strip().lower() != BULK_CONFIRM_PHRASE.lower():
                     console.print("[yellow]Aborted.[/yellow]")
                     return
 
