@@ -20,7 +20,7 @@ def log_line(msg: str, run_id: Optional[str] = None, level: str = "INFO"):
     rid = f" [run:{run_id}]" if run_id else ""
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("a", encoding="utf-8") as f:
-        f.write(f"[{ts}] {level}{rid} {msg}\n")
+        f.write(f"[{ts}] {level}{rid} {msg}\n\n")
 
 def log_event(run_id: str, event: str, data: dict | None = None, level: str = "INFO"):
     """Write a structured JSONL event (one JSON per line)."""
