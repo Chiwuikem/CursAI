@@ -7,7 +7,7 @@ from rich.table import Table
 from .schemas import Plan
 from .policies import in_allowed_scopes, requires_extra_confirmation
 from .skills.files import find_recent, move_to_trash
-from .logging_utils import log_line, log_event
+from . import logging_utils as L
 from .config import (
     MAX_DELETE_COUNT, MAX_TOTAL_DELETE_MB,
     EXTRA_CONFIRM_PHRASE, BULK_CONFIRM_PHRASE
@@ -65,9 +65,15 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
     console.print(f"[cyan]Plan:[/cyan] {plan.rationale}")
     for s in plan.steps:
         console.print(f" - {s.action}: {s.description}")
+
+    # ✅ Ensure we emit plan.built at the start
     if run_id:
-        log_event(run_id, "plan.built", {"steps": [ {"action": s.action, "params": s.params} for s in plan.steps ]})
-        log_line(f"Plan: {[ (s.action, s.params) for s in plan.steps ]}", run_id=run_id)
+        L.log_event(
+            run_id,
+            "plan.built",
+            {"steps": [{"action": s.action, "params": s.params} for s in plan.steps]},
+        )
+        L.log_line(f"Plan: {[ (s.action, s.params) for s in plan.steps ]}", run_id=run_id)
 
     hits = []
     chosen = []
@@ -85,7 +91,7 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
                 max_size_kb=step.params.get("max_size_kb"),
             )
             if run_id:
-                log_event(run_id, "search.results", {
+                L.log_event(run_id, "search.results", {
                     "count": len(hits),
                     "sample": [str(h.path) for h in hits[:5]],
                 })
@@ -96,20 +102,20 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
             hidden = before - len(hits)
             if hidden > 0:
                 console.print(f"[yellow]Note:[/yellow] {hidden} item(s) were out of allowed scopes and hidden.")
+
             chosen = _interactive_select(hits)
             if not chosen:
                 console.print("[yellow]No selection. Exiting.[/yellow]")
                 if run_id:
-                    log_event(run_id, "selection.empty", {})
+                    L.log_event(run_id, "selection.empty", {})
                 return
 
             if run_id:
-                log_event(run_id, "selection.made", {
+                L.log_event(run_id, "selection.made", {
                     "count": len(chosen),
-                    "paths": [str(c.path) for c in chosen[:50]],  # cap to keep log lines small
+                    "paths": [str(c.path) for c in chosen[:50]],
                 })
 
-            # Extra confirmation for risky/system-like selections
             risky = [h for h in chosen if requires_extra_confirmation(h.path)]
             if risky:
                 console.print("[red]Warning:[/red] risky/system-like selections detected.")
@@ -118,12 +124,11 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
                 resp = input().strip().lower()
                 ok_risky = (resp == EXTRA_CONFIRM_PHRASE.lower())
                 if run_id:
-                    log_event(run_id, "confirm.risky", {"accepted": ok_risky, "count": len(risky)})
+                    L.log_event(run_id, "confirm.risky", {"accepted": ok_risky, "count": len(risky)})
                 if not ok_risky:
                     console.print("[yellow]Aborted.[/yellow]")
                     return
 
-            # Bulk-delete safeguards: large count or large total size
             count, total_bytes = _summary(chosen)
             console.print(f"[bold]Summary:[/bold] {count} item(s), total {_fmt_size(total_bytes)}")
             needs_bulk_confirm = (count > MAX_DELETE_COUNT) or (total_bytes / (1024 * 1024) > MAX_TOTAL_DELETE_MB)
@@ -134,7 +139,7 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
                 resp = input().strip().lower()
                 ok_bulk = (resp == BULK_CONFIRM_PHRASE.lower())
                 if run_id:
-                    log_event(run_id, "confirm.bulk", {
+                    L.log_event(run_id, "confirm.bulk", {
                         "accepted": ok_bulk,
                         "count": count,
                         "total_mb": round(total_bytes / (1024 * 1024), 1)
@@ -149,25 +154,25 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
             if not do_execute:
                 console.print("[blue]Dry-run[/blue]: re-run with --execute to actually delete.")
                 if run_id:
-                    log_event(run_id, "execute.dry_run", {"count": len(chosen)})
+                    L.log_event(run_id, "execute.dry_run", {"count": len(chosen)})
                 return
             print("Type 'yes' to confirm: ", end="")
             if input().strip().lower() != "yes":
                 console.print("[yellow]Cancelled.[/yellow]")
                 if run_id:
-                    log_event(run_id, "confirm.final", {"accepted": False})
+                    L.log_event(run_id, "confirm.final", {"accepted": False})
                 return
             if run_id:
-                log_event(run_id, "confirm.final", {"accepted": True})
+                L.log_event(run_id, "confirm.final", {"accepted": True})
 
             ok, errs, outcomes = move_to_trash([c.path for c in chosen])
             if run_id:
-                log_event(run_id, "delete.result", {
+                L.log_event(run_id, "delete.result", {
                     "ok": ok,
                     "errors": errs,
-                    "outcomes": outcomes[:200],  # cap to keep line size reasonable
+                    "outcomes": outcomes[:200],
                 })
-            log_line(f"Deleted {ok}; errors: {errs}", run_id=run_id)
+            L.log_line(f"Deleted {ok}; errors: {errs}", run_id=run_id)
             console.print(f"[green]Moved {ok} item(s) to Trash.[/green]")
             if errs:
                 console.print(f"[red]Errors:[/red] {errs}")
@@ -175,9 +180,9 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
         elif step.action == "noop":
             console.print("[yellow]No actionable step parsed.[/yellow]")
             if run_id:
-                log_event(run_id, "noop", {})
+                L.log_event(run_id, "noop", {})
 
         else:
             console.print(f"[yellow]Unknown step: {step.action}[/yellow]")
             if run_id:
-                log_event(run_id, "error.unknown_step", {"action": step.action})
+                L.log_event(run_id, "error.unknown_step", {"action": step.action})

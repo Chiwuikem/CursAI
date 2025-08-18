@@ -23,26 +23,45 @@ _FILETYPE_TO_PATTERNS = {
 
 def _parse_size_kb(text: str):
     """
-    Parse things like:
-      - greater than 1 MB
-      - less than 200 KB
-      - over 1gb
-    -> returns (min_kb, max_kb)
+    Parse 'greater than 500 MB', 'over 1gb', 'less than 200kb' into (min_kb, max_kb).
+
+    Conventions:
+      - KB / MB / GB  use decimal: 1 MB = 1000 KB
+      - KiB / MiB / GiB use binary: 1 MiB = 1024 KiB
     """
     t = text.lower()
+
+    def to_kb(val: float, unit: str) -> int:
+        if unit == "kb":
+            return int(round(val))
+        if unit == "mb":
+            return int(round(val * 1000))
+        if unit == "gb":
+            return int(round(val * 1_000_000))
+        if unit == "kib":
+            # 1 KiB = 1024 bytes ≈ 1.024 KB
+            return int(round(val * 1024 / 1000))
+        if unit == "mib":
+            # 1 MiB = 1024 KiB ≈ 1024 * 1024 bytes ≈ 1_048_576 bytes ≈ 1024 KB
+            return int(round(val * 1024))
+        if unit == "gib":
+            # 1 GiB ≈ 1024 MiB ≈ 1024 * 1024 KB
+            return int(round(val * 1024 * 1024))
+        return int(round(val))
+
     gt = re.search(r"(greater than|over|at least|>=?)\s+(\d+(?:\.\d+)?)\s*(kib|kb|mib|mb|gib|gb)\b", t)
     lt = re.search(r"(less than|under|at most|<=?)\s+(\d+(?:\.\d+)?)\s*(kib|kb|mib|mb|gib|gb)\b", t)
 
     min_kb = max_kb = None
     if gt:
         val = float(gt.group(2)); unit = gt.group(3)
-        bytes_val = val * _SIZE_UNITS[unit]
-        min_kb = int(bytes_val / 1024)
+        min_kb = to_kb(val, unit)
     if lt:
         val = float(lt.group(2)); unit = lt.group(3)
-        bytes_val = val * _SIZE_UNITS[unit]
-        max_kb = int(bytes_val / 1024)
+        max_kb = to_kb(val, unit)
+
     return min_kb, max_kb
+
 
 def _parse_age_days(text: str):
     """
