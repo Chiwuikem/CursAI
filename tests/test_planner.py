@@ -13,3 +13,4 @@ def test_planner_types_age_size_name():
     assert params["older_than_days"] >= 30
     assert params["min_size_kb"] >= 1000
     assert params["name_hint"] == "report"
+
