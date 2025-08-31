@@ -1,18 +1,16 @@
 import argparse
-
-from local_assist_agent.main import run as run_agent  # absolute import from the package
+from local_assist_agent.main import run as run_agent
 from local_assist_agent.config import DEFAULT_SCOPES
 
 def main():
-    ap = argparse.ArgumentParser(description="Local Assist Agent (MVP)")
-    ap.add_argument("prompt", type=str, help="e.g., 'delete the exe I downloaded today'")
-    ap.add_argument("--execute", action="store_true", help="Actually move to Recycle Bin (default: dry-run)")
-    ap.add_argument("--scopes", type=str, default=None, help="Comma-separated allowed roots")
-    ap.add_argument("--preview", action="store_true", help="Open OS file browser to selected files before deletion")
-    
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Local Assist Agent (MVP)")
+    parser.add_argument("prompt", nargs="?", help="e.g., 'delete the exe I downloaded yesterday'")
+    parser.add_argument("--execute", action="store_true", help="Actually move to Trash (default: dry-run)")
+    parser.add_argument("--scopes", type=str, help="Comma-separated allowed roots (optional)")
+    parser.add_argument("--preview", action="store_true", help="Open OS file browser to selected files before deletion")
+    args = parser.parse_args()
 
-    scopes = [s.strip() for s in args.scopes.split(",")] if args.scopes else DEFAULT_SCOPES
+    scopes = [p.strip() for p in args.scopes.split(",")] if args.scopes else DEFAULT_SCOPES
     run_agent(args.prompt, execute=args.execute, scopes=scopes, preview=args.preview)
 
 if __name__ == "__main__":

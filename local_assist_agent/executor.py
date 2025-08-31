@@ -15,6 +15,7 @@ from .config import (
 
 console = Console()
 
+
 def _fmt_size(size_bytes: int) -> str:
     if size_bytes is None:
         return "-"
@@ -26,13 +27,19 @@ def _fmt_size(size_bytes: int) -> str:
         x /= 1024.0
     return f"{x:.1f} TB"
 
+
 def _tabulate(hits) -> Table:
     t = Table(title="Candidates (newest first)")
-    t.add_column("#"); t.add_column("Name"); t.add_column("Path"); t.add_column("Size"); t.add_column("Modified")
+    t.add_column("#")
+    t.add_column("Name")
+    t.add_column("Path")
+    t.add_column("Size")
+    t.add_column("Modified")
     for i, h in enumerate(hits, 1):
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h.mtime))
         t.add_row(str(i), h.path.name, str(h.path), _fmt_size(h.size), ts)
     return t
+
 
 def _interactive_select(hits):
     if not hits:
@@ -56,17 +63,19 @@ def _interactive_select(hits):
             idxs.add(int(part))
     return [h for i, h in enumerate(hits, 1) if i in idxs]
 
+
 def _summary(chosen) -> tuple[int, int]:
     count = len(chosen)
     total_bytes = sum((h.size or 0) for h in chosen)
     return count, total_bytes
+
 
 def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None, preview: bool = False):
     console.print(f"[cyan]Plan:[/cyan] {plan.rationale}")
     for s in plan.steps:
         console.print(f" - {s.action}: {s.description}")
 
-    # Ensure we emit plan.built at the start
+    # Emit plan.built at the start
     if run_id:
         L.log_event(
             run_id,
@@ -134,23 +143,45 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None, pre
             count, total_bytes = _summary(chosen)
             console.print(f"[bold]Summary:[/bold] {count} item(s), total {_fmt_size(total_bytes)}")
 
-            # Preview (always print a message so you know it ran)
+            # Optional OS preview + pause (robust to return shapes and errors)
             if preview and count > 0:
+                opened = 0
+                skipped = 0
+                err_str = None
                 try:
                     from .skills.preview import preview_paths
-                    opened, skipped = preview_paths([c.path for c in chosen])
-                    if run_id:
-                        L.log_event(run_id, "preview.opened", {"opened": opened, "skipped": skipped})
+                    res = preview_paths([c.path for c in chosen])
+                    if isinstance(res, tuple):
+                        if len(res) >= 1:
+                            opened = res[0]
+                        if len(res) >= 2:
+                            skipped = res[1]
+                    # else: unexpected shape; keep zeros
+                except Exception as e:
+                    err_str = str(e)
+                    console.print(f"[yellow]Preview failed:[/yellow] {err_str}")
+
+                if run_id:
+                    L.log_event(run_id, "preview.opened", {
+                        "opened": int(opened),
+                        "skipped": int(skipped),
+                        "error": err_str,
+                    })
+
+                if err_str is None:
                     msg = f"Preview: opened {opened} window(s)"
                     if skipped:
                         msg += f"; skipped {skipped} (cap reached)"
                     console.print(f"[green]{msg}[/green]")
-                except Exception as e:
-                    console.print(f"[yellow]Preview failed:[/yellow] {e}")
-                    if run_id:
-                        L.log_event(run_id, "preview.error", {"error": str(e)})
 
-            # Single bulk safeguard (remove the duplicate)
+                # Always pause so you can inspect the files before continuing
+                try:
+                    input("Preview opened/attempted. Press Enter to continue...")
+                except EOFError:
+                    # Non-interactive environments: just continue
+                    pass
+
+            # Bulk safeguard
             needs_bulk_confirm = (count > MAX_DELETE_COUNT) or (total_bytes / (1024 * 1024) > MAX_TOTAL_DELETE_MB)
             if needs_bulk_confirm:
                 console.print(f"[red]Bulk safeguard:[/red] selection exceeds limits "
