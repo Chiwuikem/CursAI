@@ -61,12 +61,12 @@ def _summary(chosen) -> tuple[int, int]:
     total_bytes = sum((h.size or 0) for h in chosen)
     return count, total_bytes
 
-def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
+def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None, preview: bool = False):
     console.print(f"[cyan]Plan:[/cyan] {plan.rationale}")
     for s in plan.steps:
         console.print(f" - {s.action}: {s.description}")
 
-    # ✅ Ensure we emit plan.built at the start
+    # Ensure we emit plan.built at the start
     if run_id:
         L.log_event(
             run_id,
@@ -116,6 +116,7 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
                     "paths": [str(c.path) for c in chosen[:50]],
                 })
 
+            # Extra confirmation for risky/system-like selections
             risky = [h for h in chosen if requires_extra_confirmation(h.path)]
             if risky:
                 console.print("[red]Warning:[/red] risky/system-like selections detected.")
@@ -129,8 +130,27 @@ def execute(plan: Plan, do_execute: bool, scopes, run_id: str | None = None):
                     console.print("[yellow]Aborted.[/yellow]")
                     return
 
+            # Summary
             count, total_bytes = _summary(chosen)
             console.print(f"[bold]Summary:[/bold] {count} item(s), total {_fmt_size(total_bytes)}")
+
+            # Preview (always print a message so you know it ran)
+            if preview and count > 0:
+                try:
+                    from .skills.preview import preview_paths
+                    opened, skipped = preview_paths([c.path for c in chosen])
+                    if run_id:
+                        L.log_event(run_id, "preview.opened", {"opened": opened, "skipped": skipped})
+                    msg = f"Preview: opened {opened} window(s)"
+                    if skipped:
+                        msg += f"; skipped {skipped} (cap reached)"
+                    console.print(f"[green]{msg}[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Preview failed:[/yellow] {e}")
+                    if run_id:
+                        L.log_event(run_id, "preview.error", {"error": str(e)})
+
+            # Single bulk safeguard (remove the duplicate)
             needs_bulk_confirm = (count > MAX_DELETE_COUNT) or (total_bytes / (1024 * 1024) > MAX_TOTAL_DELETE_MB)
             if needs_bulk_confirm:
                 console.print(f"[red]Bulk safeguard:[/red] selection exceeds limits "

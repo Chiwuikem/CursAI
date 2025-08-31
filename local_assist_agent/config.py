@@ -25,3 +25,5 @@ MAX_TOTAL_DELETE_MB = 1024          # 1 GB
 
 EXTRA_CONFIRM_PHRASE = "I UNDERSTAND"       # risky/system-like paths
 BULK_CONFIRM_PHRASE  = "I ACCEPT THE RISK"  # large selections
+# Max number of preview windows to open automatically (per run)
+PREVIEW_MAX_WINDOWS = 10
